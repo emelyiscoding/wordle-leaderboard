@@ -211,30 +211,47 @@
     }
 
     function renderHistory(rows, rangeDays){
-      const container = document.getElementById('history');
-      container.innerHTML = '';
-      const now = new Date();
-      const cutoff = rangeDays ? new Date(now.getTime() - rangeDays*24*60*60*1000) : null;
-      rows
-        .filter(r => !cutoff || new Date(r.win_date) >= cutoff)
-        .forEach(r=>{
-          const row = document.createElement('div');
-          row.className = 'py-2 flex items-center justify-between';
-          row.innerHTML = `
-            <div class="flex items-center gap-3">
-              <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-wordleGreen text-black text-xs font-bold">W</span>
-              <div>
-                <div class="font-medium">${r.player}</div>
-                <div class="text-xs text-neutral-400">${fmt.format(new Date(r.win_date))}</div>
-              </div>
-            </div>
-          `;
-          container.appendChild(row);
-        });
-      if(container.children.length===0){
-        container.innerHTML = '<p class="text-neutral-400 text-sm">No entries in this range.</p>';
-      }
-    }
+  const container = document.getElementById('history');
+  container.innerHTML = '';
+  const now = new Date();
+  const cutoff = rangeDays ? new Date(now.getTime() - rangeDays*24*60*60*1000) : null;
+  rows
+    .filter(r => !cutoff || new Date(r.win_date) >= cutoff)
+    .forEach(r=>{
+      const row = document.createElement('div');
+      row.className = 'py-2 flex items-center justify-between';
+      row.innerHTML = `
+        <div class="flex items-center gap-3">
+          <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-wordleGreen text-black text-xs font-bold">W</span>
+          <div>
+            <div class="font-medium">${r.player}</div>
+            <div class="text-xs text-neutral-400">${fmt.format(new Date(r.win_date))}</div>
+          </div>
+        </div>
+        <button class="text-xs text-red-300 hover:text-red-200 underline">Delete</button>
+      `;
+      const btn = row.querySelector('button');
+      btn.addEventListener('click', ()=> deleteWin(r.id));
+      container.appendChild(row);
+    });
+  if(container.children.length===0){
+    container.innerHTML = '<p class="text-neutral-400 text-sm">No entries in this range.</p>';
+  }
+}
+
+// Delete a single win by id
+async function deleteWin(id){
+  if(!supabaseClient) return;
+  if(!confirm('Delete this entry?')) return;
+  const { error } = await supabaseClient.from('wins').delete().eq('id', id);
+  if(error){
+    console.error(error);
+    alert(error.message || 'Could not delete (check Supabase policies).');
+  } else {
+    refreshAll();
+  }
+}
+
 
     // ====== FORM HANDLING ======
     document.getElementById('winnerForm').addEventListener('submit', async (e)=>{
