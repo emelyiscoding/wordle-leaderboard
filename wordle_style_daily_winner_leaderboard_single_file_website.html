@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wordle-Style Leaderboard</title>
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Tailwind config (Wordle-y colors)
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            wordleGreen: '#6aaa64',
+            wordleYellow: '#c9b458',
+            wordleGray: '#787c7e',
+            boardBg: '#121213',
+            tile: '#3a3a3c'
+          },
+          fontFamily: {
+            ui: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial'],
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Inter font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <!-- Supabase JS -->
+  <script defer src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <style>
+    /* Wordle-like letter tiles for the title */
+    .title-tile { background:#3a3a3c; color:#fff; border-radius:0.25rem; display:inline-flex; align-items:center; justify-content:center; width:2.25rem; height:2.25rem; font-weight:800; }
+    .card { background:#1a1a1b; border:1px solid #2a2a2b; border-radius:1rem; }
+    .glass { backdrop-filter: blur(8px); background: rgba(255,255,255,0.03); }
+    .shadow-soft { box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+    .tile-row { display:grid; grid-template-columns: 1fr auto; gap:.5rem; }
+  </style>
+</head>
+<body class="bg-boardBg text-white font-ui min-h-screen">
+  <!-- Header -->
+  <header class="sticky top-0 z-10 border-b border-neutral-800/80 bg-black/40 glass">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-1" aria-label="Wordle style title">
+        <span class="title-tile">L</span>
+        <span class="title-tile">E</span>
+        <span class="title-tile">A</span>
+        <span class="title-tile">D</span>
+        <span class="title-tile">E</span>
+        <span class="title-tile">R</span>
+        <span class="title-tile">B</span>
+        <span class="title-tile">O</span>
+        <span class="title-tile">A</span>
+        <span class="title-tile">R</span>
+        <span class="title-tile">D</span>
+      </div>
+      <div class="text-xs text-neutral-400">
+        Wordle-style daily winners
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-8 space-y-6">
+    <!-- Setup warning -->
+    <div id="setupWarning" class="hidden card p-4 text-sm text-yellow-200">
+      <strong>Finish setup:</strong> Add your Supabase URL and anon key in the script near the bottom of this file.
+    </div>
+
+    <!-- Entry form -->
+    <section class="card shadow-soft p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">Add today's winner</h2>
+        <span id="today" class="text-xs text-neutral-400"></span>
+      </div>
+      <form id="winnerForm" class="grid gap-3 md:grid-cols-4">
+        <div class="md:col-span-2">
+          <label class="block text-sm text-neutral-300 mb-1" for="player">Name</label>
+          <input id="player" name="player" required placeholder="e.g., Alex" class="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-wordleGreen" />
+        </div>
+        <div>
+          <label class="block text-sm text-neutral-300 mb-1" for="win_date">Date</label>
+          <input id="win_date" name="win_date" type="date" class="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-wordleGreen" />
+        </div>
+        <div class="flex items-end">
+          <button class="w-full rounded-lg bg-wordleGreen hover:brightness-110 active:brightness-90 font-semibold px-4 py-2" type="submit">Add</button>
+        </div>
+      </form>
+      <p class="mt-2 text-xs text-neutral-400">Tip: you can add previous days, too.</p>
+      <div id="formMsg" class="mt-3 text-sm"></div>
+    </section>
+
+    <!-- Leaderboard -->
+    <section class="card shadow-soft p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Leaderboard</h2>
+        <button id="resetSort" class="text-xs underline text-neutral-400 hover:text-white">Reset sort</button>
+      </div>
+      <div id="leaderboard" class="space-y-2"></div>
+    </section>
+
+    <!-- History -->
+    <section class="card shadow-soft p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Win history</h2>
+        <div class="flex gap-2 text-xs">
+          <button id="filterAll" class="underline text-neutral-400 hover:text-white">All</button>
+          <button id="filter30" class="underline text-neutral-400 hover:text-white">Last 30 days</button>
+          <button id="filter7" class="underline text-neutral-400 hover:text-white">Last 7 days</button>
+        </div>
+      </div>
+      <div id="history" class="divide-y divide-neutral-800"></div>
+    </section>
+
+    <footer class="text-center text-xs text-neutral-500 py-6">
+      Built for friendly Wordle bragging rights. 👑
+    </footer>
+  </main>
+
+  <script>
+    // ====== UTIL ======
+    const fmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium'});
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${yyyy}-${mm}-${dd}`;
+    document.getElementById('today').textContent = `Today: ${fmt.format(today)}`;
+    document.getElementById('win_date').value = todayStr;
+
+    function info(el, msg, ok=true){
+      el.textContent = msg; el.className = `mt-3 text-sm ${ok? 'text-emerald-300':'text-red-300'}`;
+    }
+
+    // ====== SUPABASE CONFIG ======
+    // 1) Create a Supabase project at https://supabase.com
+    // 2) Create a table named "wins" with columns:
+    //    id uuid primary key default gen_random_uuid(),
+    //    player text not null,
+    //    win_date date not null
+    // 3) (optional) Add unique constraint on (player, win_date) to avoid duplicate entries per person per day.
+    // 4) Turn on Row Level Security and add a simple policy to allow inserts/selects (see README in chat).
+
+    const SUPABASE_URL = 'https://zsjreksxtqgwetupnoqx.supabase.co';
+    const SUPABASE_ANON_KEY = 'process.env.SUPABASE_KEY';
+
+    let supabaseClient;
+    document.addEventListener('DOMContentLoaded', () => {
+      if (SUPABASE_URL.startsWith('http')) {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      } else {
+        document.getElementById('setupWarning').classList.remove('hidden');
+      }
+      refreshAll();
+    });
+
+    // ====== DATA FETCHING ======
+    async function fetchLeaderboard(){
+      if(!supabaseClient) return [];
+      const { data, error } = await supabaseClient
+        .from('wins')
+        .select('player')
+        .then(async res => {
+          if(res.error) return res;
+          // aggregate counts client-side (simple & portable)
+          const counts = {};
+          res.data.forEach(r => { counts[r.player] = (counts[r.player]||0) + 1; });
+          const arr = Object.entries(counts).map(([player, wins])=>({player, wins}));
+          arr.sort((a,b)=> b.wins - a.wins || a.player.localeCompare(b.player));
+          return { data: arr, error: null };
+        });
+      if(error) { console.error(error); return []; }
+      return data;
+    }
+
+    async function fetchHistory(){
+      if(!supabaseClient) return [];
+      const { data, error } = await supabaseClient
+        .from('wins')
+        .select('*')
+        .order('win_date', { ascending: false });
+      if(error){ console.error(error); return []; }
+      return data;
+    }
+
+    // ====== RENDERING ======
+    function renderLeaderboard(items){
+      const wrap = document.getElementById('leaderboard');
+      wrap.innerHTML = '';
+      if(!items || items.length===0){
+        wrap.innerHTML = '<p class="text-neutral-400 text-sm">No winners yet. Add the first one above! 🏁</p>';
+        return;
+      }
+      let rank = 1; let lastWins = null; let displayRank = 1;
+      items.forEach((row, idx)=>{
+        if (row.wins !== lastWins) { displayRank = rank; lastWins = row.wins; }
+        const card = document.createElement('div');
+        card.className = 'tile-row items-center p-3 rounded-lg bg-neutral-900 border border-neutral-800';
+        card.innerHTML = `
+          <div class="flex items-center gap-3">
+            <span class="inline-flex items-center justify-center w-8 h-8 rounded-md bg-tile font-bold">${displayRank}</span>
+            <div class="font-semibold">${row.player}</div>
+          </div>
+          <div class="text-right">
+            <span class="text-sm text-neutral-300">${row.wins} win${row.wins===1?'':'s'}</span>
+          </div>
+        `;
+        wrap.appendChild(card);
+        rank++;
+      });
+    }
+
+    function renderHistory(rows, rangeDays){
+      const container = document.getElementById('history');
+      container.innerHTML = '';
+      const now = new Date();
+      const cutoff = rangeDays ? new Date(now.getTime() - rangeDays*24*60*60*1000) : null;
+      rows
+        .filter(r => !cutoff || new Date(r.win_date) >= cutoff)
+        .forEach(r=>{
+          const row = document.createElement('div');
+          row.className = 'py-2 flex items-center justify-between';
+          row.innerHTML = `
+            <div class="flex items-center gap-3">
+              <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-wordleGreen text-black text-xs font-bold">W</span>
+              <div>
+                <div class="font-medium">${r.player}</div>
+                <div class="text-xs text-neutral-400">${fmt.format(new Date(r.win_date))}</div>
+              </div>
+            </div>
+          `;
+          container.appendChild(row);
+        });
+      if(container.children.length===0){
+        container.innerHTML = '<p class="text-neutral-400 text-sm">No entries in this range.</p>';
+      }
+    }
+
+    // ====== FORM HANDLING ======
+    document.getElementById('winnerForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const msg = document.getElementById('formMsg');
+      const player = document.getElementById('player').value.trim();
+      const win_date = document.getElementById('win_date').value || todayStr;
+      if(!supabaseClient){ info(msg, 'Please finish setup first.', false); return; }
+      if(!player){ info(msg, 'Enter a name.', false); return; }
+      const { error } = await supabaseClient.from('wins').insert({ player, win_date });
+      if(error){
+        console.error(error);
+        info(msg, error.message || 'Could not save.');
+      } else {
+        info(msg, 'Saved ✅');
+        (document.getElementById('winnerForm')).reset();
+        document.getElementById('win_date').value = todayStr;
+        refreshAll();
+      }
+    });
+
+    // ====== FILTERS & SORT ======
+    let historyCache = [];
+    let leaderboardCache = [];
+
+    document.getElementById('filterAll').onclick = ()=> renderHistory(historyCache, null);
+    document.getElementById('filter30').onclick = ()=> renderHistory(historyCache, 30);
+    document.getElementById('filter7').onclick = ()=> renderHistory(historyCache, 7);
+    document.getElementById('resetSort').onclick = ()=> renderLeaderboard(leaderboardCache);
+
+    async function refreshAll(){
+      leaderboardCache = await fetchLeaderboard();
+      renderLeaderboard(leaderboardCache);
+      historyCache = await fetchHistory();
+      renderHistory(historyCache, null);
+    }
+  </script>
+</body>
+</html>
